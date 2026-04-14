@@ -1,0 +1,386 @@
+#!/usr/bin/env bash
+# git-commitors — CLI manager
+# Usage: git commitors <command> [options]
+
+set -euo pipefail
+
+VERSION="1.0.0"
+
+# Determine library path
+GC_LIB_DIR="${GIT_COMMITORS_LIB:-}"
+if [[ -z "$GC_LIB_DIR" ]]; then
+    if [[ -d "$HOME/.local/share/git-commitors/lib" ]]; then
+        GC_LIB_DIR="$HOME/.local/share/git-commitors/lib"
+    else
+        GC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)" || true
+    fi
+fi
+
+if [[ -z "$GC_LIB_DIR" || ! -f "$GC_LIB_DIR/gc-common.sh" ]]; then
+    echo "Error: git-commitors library not found." >&2
+    echo "Run install.sh or set GIT_COMMITORS_LIB to the lib/ directory." >&2
+    exit 1
+fi
+
+export GC_LIB_DIR
+source "$GC_LIB_DIR/gc-common.sh"
+
+# Hooks source directory
+GC_HOOKS_DIR="${GIT_COMMITORS_HOOKS:-}"
+if [[ -z "$GC_HOOKS_DIR" ]]; then
+    if [[ -d "$HOME/.local/share/git-commitors/hooks" ]]; then
+        GC_HOOKS_DIR="$HOME/.local/share/git-commitors/hooks"
+    else
+        GC_HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../hooks" 2>/dev/null && pwd)" || true
+    fi
+fi
+
+source "$GC_LIB_DIR/gc-picker.sh"
+
+usage() {
+    cat <<EOF
+git-commitors v$VERSION — select commit author from a configured list
+
+Usage: git commitors <command> [options]
+
+Commands:
+  commit [args...]   Select author and commit (recommended)
+  init [--global]    Install hooks (per-repo or global, legacy mode)
+  remove [--global]  Remove hooks
+  list               Show configured authors
+  config             Open/create authors config file
+  import             Add @git directive to config
+  version            Show version
+  help               Show this help
+
+Aliases:
+  git commitors commit  =  git commitors c
+
+Setup (recommended):
+  git config --global alias.ci 'commitors commit'
+  Then use: git ci -m "message"
+
+Environment:
+  GIT_COMMITORS_CONFIG  Override config file path
+  GIT_COMMITORS_UI      Force UI: gui / tui / gui-zenity / tui-whiptail / ...
+  GIT_COMMITORS_SKIP=1  Skip author selection for one commit
+EOF
+}
+
+# Install hooks into a directory
+_install_hooks() {
+    local hooks_target="$1"
+    mkdir -p "$hooks_target"
+
+    for hook_name in prepare-commit-msg post-commit; do
+        local target="$hooks_target/$hook_name"
+        local source="$GC_HOOKS_DIR/$hook_name"
+
+        if [[ ! -f "$source" ]]; then
+            echo "Error: Hook source not found: $source" >&2
+            return 1
+        fi
+
+        if [[ -f "$target" ]]; then
+            # Check if it's already our hook
+            if grep -q "git-commitors" "$target" 2>/dev/null; then
+                echo "  $hook_name: already installed, updating..."
+                cp "$source" "$target"
+                chmod +x "$target"
+                continue
+            fi
+
+            # Existing hook — set up chaining
+            echo "  $hook_name: existing hook found, setting up chaining..."
+            local backup="$target.pre-git-commitors"
+            if [[ ! -f "$backup" ]]; then
+                cp "$target" "$backup"
+            fi
+
+            # Create wrapper that runs both
+            cat > "$target" <<HOOKEOF
+#!/usr/bin/env bash
+# git-commitors hook chain wrapper
+# Original hook preserved as: $(basename "$backup")
+
+# Run git-commitors hook
+"$source" "\$@"
+gc_exit=\$?
+
+# Run original hook
+if [[ -f "$backup" ]]; then
+    "$backup" "\$@"
+    orig_exit=\$?
+else
+    orig_exit=0
+fi
+
+# Exit with original hook's status (git-commitors is non-blocking)
+exit \$orig_exit
+HOOKEOF
+            chmod +x "$target"
+        else
+            cp "$source" "$target"
+            chmod +x "$target"
+            echo "  $hook_name: installed"
+        fi
+    done
+}
+
+cmd_init() {
+    local global=false
+    [[ "${1:-}" == "--global" ]] && global=true
+
+    if $global; then
+        local global_hooks_dir="$HOME/.local/share/git-commitors/hooks-global"
+        echo "Installing git-commitors hooks globally..."
+        _install_hooks "$global_hooks_dir"
+        git config --global core.hooksPath "$global_hooks_dir"
+        echo "Done. Global core.hooksPath set to: $global_hooks_dir"
+        echo ""
+        echo "Note: This overrides per-repo hooks. To use per-repo hooks alongside,"
+        echo "each repo's hooks must be installed separately after removing --global."
+    else
+        # Per-repo install
+        local git_dir
+        git_dir="$(git rev-parse --git-dir 2>/dev/null)" || {
+            echo "Error: Not a git repository." >&2
+            exit 1
+        }
+        local hooks_target="$git_dir/hooks"
+        echo "Installing git-commitors hooks in: $hooks_target"
+        _install_hooks "$hooks_target"
+        echo "Done."
+    fi
+
+    # Check config
+    local config
+    config="$(gc_config_path)"
+    if [[ ! -f "$config" ]]; then
+        echo ""
+        echo "No authors config found. Create one with:"
+        echo "  git commitors config"
+        echo "  git commitors import    # add current git user"
+    fi
+}
+
+cmd_remove() {
+    local global=false
+    [[ "${1:-}" == "--global" ]] && global=true
+
+    if $global; then
+        local current_path
+        current_path="$(git config --global core.hooksPath 2>/dev/null || true)"
+        if [[ "$current_path" == *"git-commitors"* ]]; then
+            git config --global --unset core.hooksPath
+            echo "Global core.hooksPath unset."
+        else
+            echo "Global core.hooksPath is not set to git-commitors (current: ${current_path:-<not set>})"
+        fi
+        local global_hooks_dir="$HOME/.local/share/git-commitors/hooks-global"
+        if [[ -d "$global_hooks_dir" ]]; then
+            rm -rf "$global_hooks_dir"
+            echo "Removed: $global_hooks_dir"
+        fi
+    else
+        local git_dir
+        git_dir="$(git rev-parse --git-dir 2>/dev/null)" || {
+            echo "Error: Not a git repository." >&2
+            exit 1
+        }
+        local hooks_dir="$git_dir/hooks"
+        for hook_name in prepare-commit-msg post-commit; do
+            local target="$hooks_dir/$hook_name"
+            local backup="$target.pre-git-commitors"
+
+            if [[ -f "$backup" ]]; then
+                # Restore original hook
+                mv "$backup" "$target"
+                echo "  $hook_name: restored original hook"
+            elif [[ -f "$target" ]] && grep -q "git-commitors" "$target" 2>/dev/null; then
+                rm -f "$target"
+                echo "  $hook_name: removed"
+            else
+                echo "  $hook_name: not installed"
+            fi
+        done
+        echo "Done."
+    fi
+}
+
+cmd_list() {
+    gc_parse_authors
+    local count=${#GC_NAMES[@]}
+
+    if [[ $count -eq 0 ]]; then
+        echo "No authors configured."
+        echo "Config: $(gc_config_path)"
+        return
+    fi
+
+    echo "Configured authors ($count):"
+    echo ""
+    local i
+    for i in "${!GC_NAMES[@]}"; do
+        local gpg_info=""
+        [[ -n "${GC_GPGKEYS[$i]:-}" ]] && gpg_info=" [GPG: ${GC_GPGKEYS[$i]}]"
+        printf "  %d. %s <%s>%s\n" $((i + 1)) "${GC_NAMES[$i]}" "${GC_EMAILS[$i]}" "$gpg_info"
+    done
+    echo ""
+    echo "Config: $(gc_config_path)"
+}
+
+cmd_config() {
+    local config
+    config="$(gc_config_path)"
+
+    if [[ ! -f "$config" ]]; then
+        cat > "$config" <<'CONF'
+# git-commitors authors config
+# Format: Name | Email | GPG Key ID (optional)
+# @git imports current user from git config
+
+@git
+CONF
+        echo "Created config: $config"
+    fi
+
+    # Open in editor
+    local editor="${EDITOR:-${VISUAL:-nano}}"
+    if command -v "$editor" &>/dev/null; then
+        "$editor" "$config"
+    else
+        echo "Config file: $config"
+        echo "Edit it manually or set \$EDITOR."
+    fi
+}
+
+cmd_import() {
+    local config
+    config="$(gc_config_path)"
+
+    if [[ -f "$config" ]] && grep -q "^@git" "$config" 2>/dev/null; then
+        echo "@git directive already present in config."
+        return
+    fi
+
+    local name email
+    name="$(git config user.name 2>/dev/null || true)"
+    email="$(git config user.email 2>/dev/null || true)"
+
+    if [[ -z "$name" || -z "$email" ]]; then
+        echo "Error: git user.name or user.email not configured." >&2
+        exit 1
+    fi
+
+    mkdir -p "$(dirname "$config")"
+
+    if [[ ! -f "$config" ]]; then
+        cat > "$config" <<CONF
+# git-commitors authors config
+@git
+CONF
+    else
+        # Prepend @git after any leading comments
+        local tmpfile
+        tmpfile="$(mktemp)"
+        local added=false
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$added" == false && "$line" != \#* && -n "$line" ]]; then
+                echo "@git" >> "$tmpfile"
+                added=true
+            fi
+            echo "$line" >> "$tmpfile"
+        done < "$config"
+        if [[ "$added" == false ]]; then
+            echo "@git" >> "$tmpfile"
+        fi
+        mv "$tmpfile" "$config"
+    fi
+
+    echo "Added @git to config. Current git user: $name <$email>"
+}
+
+cmd_commit() {
+    # Parse authors
+    gc_parse_authors
+    local count=${#GC_NAMES[@]}
+
+    if [[ $count -eq 0 ]]; then
+        echo "git-commitors: no authors configured. Run: git commitors config" >&2
+        exit 1
+    fi
+
+    local idx
+
+    # Skip picker if requested
+    if [[ "${GIT_COMMITORS_SKIP:-}" == "1" ]]; then
+        git commit "$@"
+        return
+    fi
+
+    # Single author — auto-select
+    if [[ $count -eq 1 ]]; then
+        idx=0
+    else
+        # Show picker
+        idx="$(gc_pick_author)" || true
+    fi
+
+    # User cancelled — abort
+    if [[ -z "$idx" ]]; then
+        echo "git-commitors: cancelled." >&2
+        exit 1
+    fi
+
+    # Validate index
+    if ! [[ "$idx" -ge 0 && "$idx" -lt $count ]] 2>/dev/null; then
+        echo "git-commitors: invalid selection." >&2
+        exit 1
+    fi
+
+    local name="${GC_NAMES[$idx]}"
+    local email="${GC_EMAILS[$idx]}"
+    local gpgkey="${GC_GPGKEYS[$idx]:-}"
+
+    # Build git commit args
+    local gc_args=()
+    gc_args+=(--author="$name <$email>")
+
+    if [[ -n "$gpgkey" ]]; then
+        gc_args+=("-S$gpgkey")
+    else
+        gc_args+=(--no-gpg-sign)
+    fi
+
+    # Set committer identity if not configured (allows commits without user.name/email)
+    if [[ -z "$(git config user.name 2>/dev/null || true)" ]]; then
+        export GIT_COMMITTER_NAME="$name"
+    fi
+    if [[ -z "$(git config user.email 2>/dev/null || true)" ]]; then
+        export GIT_COMMITTER_EMAIL="$email"
+    fi
+
+    # Run git commit with author + GPG flags + user's args
+    GIT_COMMITORS_SKIP=1 git commit "${gc_args[@]}" "$@"
+}
+
+# Main dispatch
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+    commit|c) cmd_commit "$@" ;;
+    init)     cmd_init "$@" ;;
+    remove)   cmd_remove "$@" ;;
+    list)     cmd_list ;;
+    config)   cmd_config ;;
+    import)   cmd_import ;;
+    version)  echo "git-commitors v$VERSION" ;;
+    help|--help|-h) usage ;;
+    *)
+        echo "Unknown command: $cmd" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

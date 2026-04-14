@@ -1,0 +1,10 @@
+# git-commitors authors config
+# Format: Name | Email | GPG Key ID (optional)
+# @git imports current user from git config
+
+@git
+
+# Additional authors:
+# John Doe | john@company.com | ABCD1234EF567890
+# John Doe | john@personal.com
+# Jane Smith | jane@work.org

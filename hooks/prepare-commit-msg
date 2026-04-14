@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# git-commitors: prepare-commit-msg hook
+# Shows author picker and saves selection for post-commit
+
+set -euo pipefail
+
+# Guard: recursion from post-commit amend
+[[ "${GIT_COMMITORS_AMENDING:-}" == "1" ]] && exit 0
+# Guard: explicit skip
+[[ "${GIT_COMMITORS_SKIP:-}" == "1" ]] && exit 0
+
+# Determine library path
+GC_LIB_DIR="${GIT_COMMITORS_LIB:-}"
+if [[ -z "$GC_LIB_DIR" ]]; then
+    # Check common install locations
+    if [[ -d "$HOME/.local/share/git-commitors/lib" ]]; then
+        GC_LIB_DIR="$HOME/.local/share/git-commitors/lib"
+    else
+        # Relative to hook location (development / per-repo install)
+        GC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd)" || true
+    fi
+fi
+
+if [[ -z "$GC_LIB_DIR" || ! -f "$GC_LIB_DIR/gc-common.sh" ]]; then
+    # Library not found — pass through silently
+    exit 0
+fi
+
+export GC_LIB_DIR
+source "$GC_LIB_DIR/gc-common.sh"
+source "$GC_LIB_DIR/gc-picker.sh"
+
+# Check commit source ($2): skip for merge, squash, cherry-pick, revert
+COMMIT_SOURCE="${2:-}"
+case "$COMMIT_SOURCE" in
+    merge|squash) exit 0 ;;
+esac
+
+# Check if interactive mode is available
+gc_is_interactive || exit 0
+
+# Parse authors
+gc_parse_authors
+count=${#GC_NAMES[@]}
+
+# No authors configured — pass through
+[[ $count -eq 0 ]] && exit 0
+
+GIT_DIR_PATH="$(git rev-parse --git-dir)"
+
+# Single author — auto-select without dialog
+if [[ $count -eq 1 ]]; then
+    idx=0
+else
+    # Show picker
+    idx="$(gc_pick_author)" || true
+fi
+
+# User cancelled or empty result — pass through (use default author)
+if [[ -z "$idx" ]]; then
+    exit 0
+fi
+
+# Validate index
+if [[ "$idx" -lt 0 || "$idx" -ge $count ]] 2>/dev/null; then
+    exit 0
+fi
+
+# Save selection for post-commit
+{
+    echo "name=${GC_NAMES[$idx]}"
+    echo "email=${GC_EMAILS[$idx]}"
+    echo "gpgkey=${GC_GPGKEYS[$idx]:-}"
+} > "$GIT_DIR_PATH/gc-author-selection"
+
+exit 0
