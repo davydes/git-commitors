@@ -34,8 +34,7 @@ Interactive prompt will ask for the mode (alias/hook/both), or pass directly:
 Remote install:
 
 ```bash
-GIT_COMMITORS_REPO=https://github.com/davydes/git-commitors.git \
-  curl -fsSL https://raw.githubusercontent.com/davydes/git-commitors/main/get.sh | bash
+curl -fsSL https://raw.githubusercontent.com/davydes/git-commitors/master/get.sh | bash
 ```
 
 ### Uninstall

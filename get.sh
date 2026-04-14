@@ -2,9 +2,9 @@
 # git-commitors remote installer
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/USER/git-commitors/main/get.sh | bash
-#   wget -qO- https://gitlab.com/USER/git-commitors/-/raw/main/get.sh | bash
-#   curl -fsSL https://gitea.example.com/USER/git-commitors/raw/branch/main/get.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/davydes/git-commitors/main/get.sh | bash
+#   wget -qO- https://gitlab.com/davydes/git-commitors/-/raw/main/get.sh | bash
+#   curl -fsSL https://gitea.example.com/davydes/git-commitors/raw/branch/main/get.sh | bash
 #
 # Environment:
 #   GIT_COMMITORS_REPO  Full clone URL (auto-detected from get.sh URL if possible)
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REF="${GIT_COMMITORS_REF:-main}"
+REF="${GIT_COMMITORS_REF:-master}"
 TMPDIR=""
 
 cleanup() {
@@ -31,8 +31,8 @@ if [[ -z "$REPO_URL" ]]; then
         for token in $cmdline; do
             case "$token" in
                 *github.com/*/git-commitors/*)
-                    # https://raw.githubusercontent.com/USER/git-commitors/main/get.sh
-                    # -> https://github.com/USER/git-commitors.git
+                    # https://raw.githubusercontent.com/davydes/git-commitors/main/get.sh
+                    # -> https://github.com/davydes/git-commitors.git
                     user="$(echo "$token" | sed -n 's|.*github\.com/\([^/]*/git-commitors\).*|\1|p')"
                     [[ -n "$user" ]] && REPO_URL="https://github.com/$user.git"
                     ;;
@@ -41,7 +41,7 @@ if [[ -z "$REPO_URL" ]]; then
                     [[ -n "$user" ]] && REPO_URL="https://gitlab.com/$user.git"
                     ;;
                 *git-commitors/raw/branch/*/get.sh)
-                    # Gitea: https://host/USER/git-commitors/raw/branch/main/get.sh
+                    # Gitea: https://host/davydes/git-commitors/raw/branch/main/get.sh
                     base="$(echo "$token" | sed 's|/raw/branch/.*||')"
                     [[ -n "$base" ]] && REPO_URL="$base.git"
                     ;;
@@ -52,10 +52,8 @@ if [[ -z "$REPO_URL" ]]; then
 fi
 
 if [[ -z "$REPO_URL" ]]; then
-    echo "Error: cannot detect repository URL." >&2
-    echo "Set GIT_COMMITORS_REPO explicitly:" >&2
-    echo "  GIT_COMMITORS_REPO=https://github.com/USER/git-commitors.git curl -fsSL <url>/get.sh | bash" >&2
-    exit 1
+    # Default repo
+    REPO_URL="https://github.com/davydes/git-commitors.git"
 fi
 
 # --- Clone and install ---
