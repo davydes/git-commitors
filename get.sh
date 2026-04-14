@@ -56,8 +56,32 @@ if [[ -z "$REPO_URL" ]]; then
     REPO_URL="https://github.com/davydes/git-commitors.git"
 fi
 
+# --- Ask install mode (while /dev/tty is available) ---
+
+INSTALL_MODE="${GIT_COMMITORS_MODE:-}"
+
+if [[ -z "$INSTALL_MODE" && -r /dev/tty ]]; then
+    echo "git-commitors — select commit author"
+    echo ""
+    echo "Install mode:"
+    echo "  1) alias  — git ci = git commitors commit (recommended)"
+    echo "  2) hook   — auto-trigger on every git commit (global hook)"
+    echo "  3) both   — alias + global hook"
+    echo ""
+    read -rp "Mode [1/2/3] (default: 1): " choice </dev/tty
+    case "${choice:-1}" in
+        1|alias) INSTALL_MODE="--alias" ;;
+        2|hook)  INSTALL_MODE="--hook" ;;
+        3|both)  INSTALL_MODE="--both" ;;
+        *)       INSTALL_MODE="--alias" ;;
+    esac
+else
+    INSTALL_MODE="${INSTALL_MODE:---alias}"
+fi
+
 # --- Clone and install ---
 
+echo ""
 echo "git-commitors remote installer"
 echo "  Repo: $REPO_URL"
 echo "  Ref:  $REF"
@@ -68,4 +92,4 @@ TMPDIR="$(mktemp -d)"
 git clone --depth 1 --branch "$REF" "$REPO_URL" "$TMPDIR/git-commitors" 2>&1 | sed 's/^/  /'
 
 echo ""
-bash "$TMPDIR/git-commitors/install.sh"
+bash "$TMPDIR/git-commitors/install.sh" "$INSTALL_MODE"

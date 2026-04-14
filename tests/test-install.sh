@@ -190,16 +190,13 @@ run_test test_install_both
 
 # --- get.sh ---
 
-test_get_fails_without_repo_url() {
-    local fake_home
-    fake_home="$(mktemp -d "$TEST_TMPDIR/home-XXXXXX")"
-
-    local output exit_code
-    output="$(HOME="$fake_home" unset GIT_COMMITORS_REPO; bash "$PROJECT_DIR/get.sh" 2>&1)" && exit_code=0 || exit_code=$?
-    assert_eq 1 "$exit_code" "get.sh should fail without repo URL"
-    assert_contains "$output" "GIT_COMMITORS_REPO" "should suggest setting GIT_COMMITORS_REPO"
+test_get_uses_default_repo() {
+    # Without GIT_COMMITORS_REPO, get.sh should default to davydes/git-commitors
+    local content
+    content="$(cat "$PROJECT_DIR/get.sh")"
+    assert_contains "$content" "davydes/git-commitors" "default repo URL should be set"
 }
-run_test test_get_fails_without_repo_url
+run_test test_get_uses_default_repo
 
 test_get_clones_and_installs() {
     local bare_repo
@@ -224,6 +221,7 @@ test_get_clones_and_installs() {
         export HOME="$fake_home"
         export GIT_COMMITORS_REPO="$bare_repo/git-commitors.git"
         export GIT_COMMITORS_REF="main"
+        export GIT_COMMITORS_MODE="--alias"
         bash "$PROJECT_DIR/get.sh"
     ) >/dev/null 2>&1
 
