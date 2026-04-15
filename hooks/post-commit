@@ -6,6 +6,8 @@ set -euo pipefail
 
 # Guard: recursion from our own amend
 [[ "${GIT_COMMITORS_AMENDING:-}" == "1" ]] && exit 0
+# Guard: alias mode already handled author selection
+[[ "${GIT_COMMITORS_SKIP:-}" == "1" ]] && exit 0
 
 GIT_DIR_PATH="$(git rev-parse --git-dir)"
 SELECTION_FILE="$GIT_DIR_PATH/gc-author-selection"
@@ -45,7 +47,7 @@ else
     amend_args+=(--no-gpg-sign)
 fi
 
-# Execute amend with recursion guard
-GIT_COMMITORS_AMENDING=1 git "${amend_args[@]}" >/dev/null 2>&1 || true
+# Execute amend with recursion guard, setting committer to match author
+GIT_COMMITTER_NAME="$name" GIT_COMMITTER_EMAIL="$email" GIT_COMMITORS_AMENDING=1 git "${amend_args[@]}" >/dev/null 2>&1 || true
 
 exit 0

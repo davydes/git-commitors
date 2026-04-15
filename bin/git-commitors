@@ -353,13 +353,9 @@ cmd_commit() {
         gc_args+=(--no-gpg-sign)
     fi
 
-    # Set committer identity if not configured (allows commits without user.name/email)
-    if [[ -z "$(git config user.name 2>/dev/null || true)" ]]; then
-        export GIT_COMMITTER_NAME="$name"
-    fi
-    if [[ -z "$(git config user.email 2>/dev/null || true)" ]]; then
-        export GIT_COMMITTER_EMAIL="$email"
-    fi
+    # Set committer identity to match the selected author
+    export GIT_COMMITTER_NAME="$name"
+    export GIT_COMMITTER_EMAIL="$email"
 
     # Run git commit with author + GPG flags + user's args
     GIT_COMMITORS_SKIP=1 git commit "${gc_args[@]}" "$@"
